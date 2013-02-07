@@ -30,6 +30,7 @@ import Data.Char (toLower)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
+import System.IO.Unsafe (unsafeInterleaveIO)
 
 -- | Run an action on a HDBC IConnection and close the connection.
 hdbcConnect :: (MonadIO m, IConnection conn) => 
@@ -176,12 +177,17 @@ hdbcPrimQuery conn sql scheme rel =
     stmt <- handleSqlError $ HDBC.prepare conn sql
     handleSqlError $ HDBC.execute stmt []
     rows <- fetchNormalizedAllRowsAL stmt
-    mapM (getRec hdbcGetInstances rel scheme) $ map Map.fromList rows
+    lazyMapIO (getRec hdbcGetInstances rel scheme . Map.fromList) rows
   where fetchNormalizedAllRowsAL sth =
           do
           names <- map normalizeField `fmap` getColumnNames sth
           rows <- fetchAllRows sth
           return $ map (zip names) rows
+        lazyMapIO action []     = return []
+        lazyMapIO action (a:as) = unsafeInterleaveIO $
+          do
+          b <- action a
+          fmap (b :) $ lazyMapIO action as
 
 -- | Primitive execute
 hdbcPrimExecute :: (IConnection conn) => conn -- ^ Database connection.
