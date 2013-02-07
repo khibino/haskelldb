@@ -25,6 +25,7 @@ module Database.HaskellDB.Query (
 	     , ShowConstant(..), ExprC(..), ProjectExpr, ProjectRec, InsertRec
 	     , ExprAggr(..), ExprDefault(..)
 	     , copy, copyAll, RelToRec
+             , copyAll', copyTuple, PrefixRelToRec
 	      -- * Operators
 	     , (.==.) , (.<>.), (.<.), (.<=.), (.>.), (.>=.)
 	     , (.&&.) , (.||.)
@@ -56,6 +57,7 @@ import Database.HaskellDB.BoundedString
 import Database.HaskellDB.BoundedList
 
 import System.Time (CalendarTime)
+import Control.Applicative ((<$>), (<*>))
 
 -----------------------------------------------------------
 -- Operators
@@ -205,6 +207,13 @@ instance RelToRec RecNil where
       unRel :: Rel r -> r
       unRel = error "unRel RelToRec RecNil"
 
+copyAll' :: PrefixRelToRec r => String -> Rel r -> Record r
+copyAll' =  prefixRelToRec
+
+copyTuple :: (PrefixRelToRec r1, PrefixRelToRec r2) =>
+             Rel r1 -> Rel r2 -> Record (r1, r2)
+copyTuple r1 r2 = (,) <$> copyAll' "l_" r1 <*> copyAll' "r_" r2
+
 -- All this type magic takes the first field off the Rel (Record ...) type, 
 -- turns it into a (Record ...) type, and prepends it to the rest of the 
 -- converted record. 
@@ -214,6 +223,25 @@ instance (RelToRec rest, FieldTag f) => RelToRec (RecCons f (Expr a) rest) where
       attr :: FieldTag f => f -> Attr f a
       attr = Attr . fieldName
       fieldT :: Rel (RecCons f a rest) -> f 
+      fieldT = error "fieldT"
+      restT :: Rel (RecCons f a rest) -> Rel rest
+      restT _ = Rel v s
+
+class PrefixRelToRec a where
+  prefixRelToRec :: String -> Rel a -> Record a
+
+instance PrefixRelToRec RecNil where
+  prefixRelToRec _ v = \_ -> unRel v
+    where
+      unRel :: Rel r -> r
+      unRel = error "unRel RelToRec RecNil"
+
+instance (PrefixRelToRec rest, FieldTag f) => PrefixRelToRec (RecCons f (Expr a) rest) where
+  prefixRelToRec pre t@(Rel v s) = copy (attr . fieldT $ t) t # prefixRelToRec pre (restT t)
+    where
+      attr :: FieldTag f => f -> Attr f a
+      attr = Attr . (pre ++) . fieldName
+      fieldT :: Rel (RecCons f a rest) -> f
       fieldT = error "fieldT"
       restT :: Rel (RecCons f a rest) -> Rel rest
       restT _ = Rel v s
